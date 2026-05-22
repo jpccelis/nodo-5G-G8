@@ -1,0 +1,25 @@
+# Servicio systemd: hace que el firmware arranque solo al encender la Raspberry
+# y se reinicie si se cae. Se instala mas adelante (no es necesario el viernes).
+#
+# Instalacion (cuando estes listo):
+#   sudo cp systemd/nodo-monitoreo.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nodo-monitoreo
+#
+# Ver el log en vivo:   journalctl -u nodo-monitoreo -f
+
+[Unit]
+Description=Nodo de Monitoreo Ambiental VitiScience (Grupo P8)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/nodo-monitoreo
+ExecStart=/usr/bin/python3 /home/pi/nodo-monitoreo/src/main.py /home/pi/nodo-monitoreo/config.ini
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
