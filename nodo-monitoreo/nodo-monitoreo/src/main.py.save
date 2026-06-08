@@ -17,13 +17,12 @@ DESACOPLADOS y telemetria estadistica:
 Idea general:
   - El nodo MIDE cada T_MEDIR segundos (default 10 s) y acumula las muestras
     en una ventana deslizante de las ultimas N lecturas.
-  - Cada T_TRANSMITIR segundos (default 40 s) transmite por MQTT un mensaje
-    con las muestras crudas (FIFO) Y el agregado estadistico (avg, std).
+  - Cada T_TRANSMITIR segundos (default 40 s) calcula promedios y desviaciones
+    estandar de la ventana y TRANSMITE ese agregado por MQTT (sobre 5G).
   - Si no hay conexion, GUARDA el agregado en un buffer local (store-and-forward).
     Cuando la conexion vuelve, manda primero lo guardado (orden FIFO).
   - Cada lectura pasa por un paso de VALIDACION (rango fisico + sanidad).
     Si una lectura es invalida, la FSM pasa al estado ERROR.
-  - CHECK_CONNECTIVITY reporta la tecnologia de acceso celular (LTE, 5GNR, etc).
 
 El "SLEEP" sigue siendo un time.sleep() (POC). El control de duty cycling
 por GPIO del HAT se integra mas adelante.
@@ -35,7 +34,6 @@ import json
 import time
 import enum
 import socket
-import subprocess
 import statistics
 import configparser
 from collections import deque
@@ -86,31 +84,14 @@ def cargar_config(ruta):
     return cfg
 
 
-def obtener_tech_celular():
-    """
-    Consulta mmcli para obtener la tecnologia de acceso celular actual.
-    Retorna un string como 'LTE', '5GNR', 'UMTS', o 'DESCONOCIDA'.
-    """
-    try:
-        resultado = subprocess.run(
-            ["mmcli", "-m", "0"],
-            capture_output=True, text=True, timeout=5
-        )
-        for linea in resultado.stdout.splitlines():
-            if "access tech" in linea:
-                tech = linea.split(":")[-1].strip()
-                return tech.upper()
-    except Exception:
-        pass
-    return "DESCONOCIDA"
-
-
 def hay_internet(host="1.1.1.1", port=80, timeout=4, interfaz="wwan0"):
     """
     Prueba de conectividad forzando salida por la interfaz 5G/LTE (wwan0).
     Si wwan0 no existe o no tiene IP, retorna False inmediatamente.
     """
     try:
+        # verificar que la interfaz existe y tiene IP asignada
+        import subprocess
         resultado = subprocess.run(
             ["ip", "addr", "show", interfaz],
             capture_output=True, text=True, timeout=3
@@ -230,16 +211,24 @@ class Nodo:
             f"ventana={self.ventana_n} muestras.")
         self.estado = Estado.CHECK_CONNECTIVITY
 
-    def check_connectivity(self):
-        # Detectar tecnologia de acceso celular actual
-        tech = obtener_tech_celular()
+    def check_connectivity(self):    # --- Detectar tecnologia de acceso celular ---
+    	try:
+        	import subprocess
+        	resultado = subprocess.run(
+            ["mmcli", "-m", "0"],
+            capture_output=True, text=True, timeout=5
+        )
+        linea = [l for l in resultado.stdout.splitlines()
+                 if "access tech" in l]
+        tech = linea[0].split(":")[-1].strip() if linea else "desconocida"
+    except Exception:
+        tech = "desconocida"
 
-        if hay_internet():
-            log(self.estado, f"Hay conexion a internet. Tecnologia: {tech}.")
-        else:
-            log(self.estado, f"SIN conexion ({tech}). Igual mido y acumulo.")
-        self.estado = Estado.MEDIR
-
+    if hay_internet():
+        log(self.estado, f"Hay conexion a internet. Tecnologia: {tech.upper()}.")
+    else:
+        log(self.estado, f"SIN conexion ({tech.upper()}). Igual mido y acumulo.")
+    self.estado = Estado.MEDIR
     def medir(self):
         """Toma UNA muestra del sensor y la deja en self._lectura_cruda."""
         try:
@@ -275,7 +264,7 @@ class Nodo:
         """
         Calcula estadisticas de la ventana deslizante y decide si toca
         transmitir o seguir midiendo.
-        El payload incluye las muestras crudas (FIFO) Y el agregado estadistico.
+        El payload incluye las muestras crudas Y el agregado estadistico.
         """
         temps = [m["t"] for m in self.muestras]
         hums = [m["h"] for m in self.muestras]
@@ -309,7 +298,7 @@ class Nodo:
             f"rh_avg={self.agregado_actual['rh_avg']} %, "
             f"n_samples={n}, samples incluidos.")
 
-        # Decidir: ya paso T_TRANSMITIR desde la ultima transmision?
+        # Decidir: ¿ya paso T_TRANSMITIR desde la ultima transmision?
         transcurrido = time.monotonic() - self.ultima_tx
         if transcurrido >= self.t_transmitir:
             log(self.estado,
