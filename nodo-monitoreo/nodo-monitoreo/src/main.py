@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 # Importamos nuestros propios modulos (los otros archivos del proyecto).
 from sensor_aht10 import AHT10
 from mqtt_client import MqttPublisher
-
+from sensor_ble import SensorBLE as AHT10
 
 # ---------- 1) Definicion de los estados de la FSM ----------
 class Estado(enum.Enum):
@@ -220,6 +220,9 @@ class Nodo:
     def boot(self):
         log(self.estado, "Inicializando sensor y cliente MQTT...")
         self.sensor = AHT10(bus_number=1)
+        #La linea siguiente es para usar el sensor BLE. Requiere que la ESP32 con el firmware adecuado este transmitiendo.
+        #habría que eliminar la linea anterior (AHT10 local) y descomentar esta, que importa SensorBLE como AHT10.
+        #self.sensor = AHT10(mac_address=cfg.get("nodo", "esp32_mac"))
         self.mqtt = MqttPublisher(self.broker, self.port, self.topic,
                                   client_id=self.node_id)
         # Inicializamos el reloj de transmision: la primera TX ocurre
