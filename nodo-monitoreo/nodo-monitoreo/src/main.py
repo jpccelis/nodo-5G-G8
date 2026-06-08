@@ -1,6 +1,6 @@
 """
 main.py  —  Firmware del Nodo de Monitoreo Ambiental (Grupo P8 / VitiScience)
-============================================================================
+
 
 Maquina de estados (FSM) del nodo. Version con sensado y transmision
 DESACOPLADOS y telemetria estadistica:
