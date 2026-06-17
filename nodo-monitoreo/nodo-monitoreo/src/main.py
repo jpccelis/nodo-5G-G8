@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 
 from sensor_aht10 import AHT10
 from mqtt_client import MqttPublisher
-from sensor_ble import SensorBLE as AHT10
+# from sensor_ble import SensorBLE as AHT10
 
 # ---------- 1) Estados de la FSM ----------
 
@@ -333,7 +333,15 @@ class Nodo:
 
     def boot(self):
         log(self.estado, "Inicializando sensor y cliente MQTT...")
+        # --- OPCIONES DE SENSOR ---
+        # 1. Sensor Local I2C (o Simulado/Random si se modifico sensor_aht10.py)
         self.sensor = AHT10(bus_number=1)
+
+        # 2. Sensor BLE (Descomentar para usar ESP32 externa y comentar la linea anterior)
+        # Importante: requiere configurar la mac_address en config.ini mas adelante
+        # self.sensor = AHT10(mac_address=self.cfg.get("nodo", "esp32_mac", fallback="XX:XX:XX:XX:XX:XX"))
+        # --------------------------
+
         self.mqtt   = MqttPublisher(self.broker, self.port, self.topic,
                                     client_id=self.node_id)
         self.ultima_tx = time.monotonic()
