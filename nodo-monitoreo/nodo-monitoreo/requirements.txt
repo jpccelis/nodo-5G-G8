@@ -1,5 +1,7 @@
 # Dependencias de Python del firmware del nodo.
-# Se instalan con:  pip install -r requirements.txt
-smbus2==0.5.0          # comunicacion I2C con el sensor AHT10
-paho-mqtt==1.6.1       # cliente MQTT para transmitir las mediciones
-bleak==0.21.1        # cliente BLE para recibir las mediciones del ESP32 (si usas el sensor BLE en vez del AHT10 local)
+# Se instalan con: pip install -r requirements.txt
+
+smbus2==0.5.0      # comunicacion I2C con el sensor AHT10
+paho-mqtt==1.6.1   # cliente MQTT para transmitir las mediciones
+bleak==0.21.1      # cliente BLE para el sensor ESP32 (opcional)
+RPi.GPIO==0.7.1    # control de pines GPIO para duty cycling del HAT (modo gpio)

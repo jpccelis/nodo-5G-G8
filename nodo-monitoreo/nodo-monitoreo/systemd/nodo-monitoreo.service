@@ -1,12 +1,13 @@
-# Servicio systemd: hace que el firmware arranque solo al encender la Raspberry
-# y se reinicie si se cae. Se instala mas adelante (no es necesario el viernes).
+# Servicio systemd: arranca el firmware automaticamente al encender la Pi
+# y lo reinicia si se cae.
 #
-# Instalacion (cuando estes listo):
+# Instalacion:
 #   sudo cp systemd/nodo-monitoreo.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now nodo-monitoreo
 #
-# Ver el log en vivo:   journalctl -u nodo-monitoreo -f
+# Ver el log en vivo:
+#   journalctl -u nodo-monitoreo -f
 
 [Unit]
 Description=Nodo de Monitoreo Ambiental VitiScience (Grupo P8)
@@ -15,9 +16,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/nodo-monitoreo
-ExecStart=/usr/bin/python3 /home/pi/nodo-monitoreo/src/main.py /home/pi/nodo-monitoreo/config.ini
+User=plant123
+# Necesario para acceder a los pines GPIO sin ser root
+SupplementaryGroups=gpio
+
+WorkingDirectory=/home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/src
+ExecStart=/home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/venv/bin/python \
+          /home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/src/main.py \
+          /home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/config.ini
 Restart=always
 RestartSec=10
 
