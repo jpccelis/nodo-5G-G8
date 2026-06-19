@@ -38,9 +38,9 @@ import configparser
 from collections import deque
 from datetime import datetime, timezone
 
-from sensor_aht10 import AHT10
+#from sensor_aht10 import AHT10
 from mqtt_client import MqttPublisher
-# from sensor_ble import SensorBLE as AHT10
+from sensor_ble import SensorBLE as AHT10
 
 # ---------- 1) Estados de la FSM ----------
 
@@ -79,17 +79,35 @@ def cargar_config(ruta):
     return cfg
 
 def obtener_tech_celular():
+    """Detecta automaticamente el modem visible y devuelve su tecnologia celular."""
     try:
-        resultado = subprocess.run(
-            ["mmcli", "-m", "0"],
+        lista = subprocess.run(
+            ["mmcli", "-L"],
             capture_output=True, text=True, timeout=5
         )
+
+        modem_id = None
+        for linea in lista.stdout.splitlines():
+            if "/Modem/" in linea:
+                modem_id = linea.split("/Modem/")[-1].split()[0].strip()
+                break
+
+        if modem_id is None:
+            return "DESCONOCIDA"
+
+        resultado = subprocess.run(
+            ["mmcli", "-m", modem_id],
+            capture_output=True, text=True, timeout=5
+        )
+
         for linea in resultado.stdout.splitlines():
-            if "access tech" in linea:
-                tech = linea.split(":")[-1].strip()
+            if "access tech" in linea.lower():
+                tech = linea.split(":", 1)[-1].strip()
                 return tech.upper()
+
     except Exception:
         pass
+
     return "DESCONOCIDA"
 
 def hay_internet(host="1.1.1.1", port=80, timeout=4, interfaz="wwan0"):
@@ -180,7 +198,7 @@ class HatController:
             self._GPIO = GPIO
             GPIO.setmode(GPIO.BCM)
             # PWRKEY normalmente esta en reposo HIGH; un pulso LOW enciende/apaga.
-            GPIO.setup(self.gpio_pin, GPIO.OUT, initial=GPIO.HIGH)
+            GPIO.setup(self.gpio_pin, GPIO.OUT, initial=GPIO.LOW)
             self._gpio_ok = True
             print(f"[HatController] GPIO iniciado en pin BCM {self.gpio_pin}.")
         except ImportError:
@@ -195,9 +213,9 @@ class HatController:
         Genera un pulso LOW en PWRKEY por pwrkey_ms milisegundos.
         El RG520N-EB interpreta este pulso como orden de encendido o apagado.
         """
-        self._GPIO.output(self.gpio_pin, self._GPIO.LOW)
-        time.sleep(self.pwrkey_ms / 1000.0)
         self._GPIO.output(self.gpio_pin, self._GPIO.HIGH)
+        time.sleep(self.pwrkey_ms / 1000.0)
+        self._GPIO.output(self.gpio_pin, self._GPIO.LOW)
 
     def encender(self):
         """
@@ -211,7 +229,9 @@ class HatController:
             time.sleep(self.boot_wait_s)
             return self._reconectar_modem()
         else:
-            return self._mmcli_enable()
+            # En modo mmcli, no basta con --enable: despues de --disable
+            # hay que volver a conectar APN y restaurar la ruta por wwan0.
+            return self._reconectar_modem()
 
     def apagar(self):
         """Apaga el HAT."""
@@ -234,36 +254,23 @@ class HatController:
 
     def _reconectar_modem(self):
         """
-        Secuencia de conexion post-boot (equivale a conectar-5g.sh pero desde Python).
-        Se ejecuta despues de un encendido por GPIO.
+        Reconecta el modem 5G y configura wwan0 dinamicamente
+        usando src/modem_net.py.
         """
         try:
-            subprocess.run(["sudo", "mmcli", "-m", "0", "--enable"],
-                           timeout=10, check=True)
-            time.sleep(2)
-            subprocess.run(
-                ["sudo", "mmcli", "-m", "0",
-                 "--simple-connect=apn=bam.entelpcs.cl"],
-                timeout=30, check=True
+            from modem_net import configure_wwan_from_bearer
+
+            ok = configure_wwan_from_bearer(
+                modem_id="auto",
+                apn="bam.entelpcs.cl",
+                metric="50"
             )
-            time.sleep(3)
-            # Agregar ruta por defecto via wwan0
-            r = subprocess.run(
-                ["ip", "route", "show", "dev", "wwan0"],
-                capture_output=True, text=True, timeout=5
-            )
-            for linea in r.stdout.splitlines():
-                if "default" in linea:
-                    partes = linea.split()
-                    if "via" in partes:
-                        gw = partes[partes.index("via") + 1]
-                        subprocess.run(
-                            ["sudo", "ip", "route", "add", "default",
-                             "via", gw, "dev", "wwan0", "metric", "100", "mtu", "1500"],
-                            timeout=5
-                        )
-                        break
+
+            if not ok:
+                return False
+
             return hay_internet()
+
         except Exception as e:
             print(f"[HatController] Error al reconectar modem: {e}")
             return False
@@ -280,15 +287,27 @@ class HatController:
             return False
 
     def _mmcli_disable(self):
-        """Deshabilita el radio via mmcli."""
+        """
+        Deshabilita el radio via mmcli usando el modem_id actual.
+
+        ModemManager puede cambiar el numero del modem:
+        a veces es /Modem/0, otras /Modem/1.
+        Por eso aqui tambien lo detectamos automaticamente.
+        """
         try:
-            subprocess.run(["sudo", "mmcli", "-m", "0", "--disable"],
-                           timeout=10, check=True)
+            from modem_net import _find_modem_id
+
+            modem_id = _find_modem_id()
+            if not modem_id:
+                print("[HatController] Aviso: no hay modem visible para deshabilitar.")
+                return
+
+            subprocess.run(["sudo", "mmcli", "-m", modem_id, "--disable"],
+                           timeout=35, check=False)
+
         except Exception as e:
-            print(f"[HatController] Error al deshabilitar modem: {e}")
+            print(f"[HatController] Aviso al deshabilitar modem: {e}")
 
-
-# ---------- 6) El nodo (FSM) ----------
 
 class Nodo:
 
@@ -335,11 +354,11 @@ class Nodo:
         log(self.estado, "Inicializando sensor y cliente MQTT...")
         # --- OPCIONES DE SENSOR ---
         # 1. Sensor Local I2C (o Simulado/Random si se modifico sensor_aht10.py)
-        self.sensor = AHT10(bus_number=1)
+        #self.sensor = AHT10(bus_number=1)
 
         # 2. Sensor BLE (Descomentar para usar ESP32 externa y comentar la linea anterior)
         # Importante: requiere configurar la mac_address en config.ini mas adelante
-        # self.sensor = AHT10(mac_address=self.cfg.get("nodo", "esp32_mac", fallback="XX:XX:XX:XX:XX:XX"))
+        self.sensor = AHT10(mac_address=self.cfg.get("nodo", "esp32_mac", fallback="XX:XX:XX:XX:XX:XX"))
         # --------------------------
 
         self.mqtt   = MqttPublisher(self.broker, self.port, self.topic,
@@ -462,9 +481,23 @@ class Nodo:
             self.estado = Estado.HAT_OFF  # siempre apagar despues de TX
 
     def hat_off(self):
-        """Apaga el HAT despues de transmitir."""
+        """Apaga el HAT despues de transmitir y limpia la ruta celular."""
         log(self.estado, f"Apagando HAT (modo={self.hat.modo})...")
         self.hat.apagar()
+
+        # Al deshabilitar el modem con mmcli, Linux puede conservar una ruta vieja por wwan0.
+        # La eliminamos para que, entre ciclos, la Raspberry vuelva a usar wlan0/eth0 si existen.
+        try:
+            subprocess.run(
+                ["sudo", "ip", "route", "del", "default", "dev", "wwan0"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            log(self.estado, "Ruta default por wwan0 limpiada.")
+        except Exception as e:
+            log(self.estado, f"No se pudo limpiar ruta wwan0: {e}")
+
         log(self.estado, "HAT apagado.")
         self.estado = Estado.SLEEP
 
