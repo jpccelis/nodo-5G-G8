@@ -11,19 +11,15 @@
 
 [Unit]
 Description=Nodo de Monitoreo Ambiental VitiScience (Grupo P8)
-After=network-online.target
-Wants=network-online.target
+After=bluetooth.service ModemManager.service
+Wants=bluetooth.service ModemManager.service
 
 [Service]
 Type=simple
-User=plant123
-# Necesario para acceder a los pines GPIO sin ser root
-SupplementaryGroups=gpio
 
-WorkingDirectory=/home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/src
-ExecStart=/home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/venv/bin/python \
-          /home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/src/main.py \
-          /home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/config.ini
+WorkingDirectory=/home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo
+ExecStart=/home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/venv/bin/python /home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/src/main.py /home/plant123/nodo-5G-G8/nodo-monitoreo/nodo-monitoreo/config.ini
+
 Restart=always
 RestartSec=10
 
